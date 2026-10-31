@@ -3,19 +3,19 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 echo ============================================================================
-echo   YouTube Premium (Tizen 3.0 Edition) - Automaticka instalace do Samsung TV
-echo   Automatic Installer & Certificate Signer for Samsung Tizen TVs
+echo   YouTube Premium (Tizen 3.0 Edition) - Samsung TV Installer
+echo   Automatic Certificate Signer ^& Installer / Automaticka instalace do TV
 echo ============================================================================
 echo.
 
 set "TIZEN_DIR=C:\tizen-studio"
 if not exist "%TIZEN_DIR%\tools\sdb.exe" (
-    set /p TIZEN_DIR="Zadejte cestu k Tizen Studio (default C:\tizen-studio): "
+    set /p TIZEN_DIR="Enter Tizen Studio path / Zadejte cestu k Tizen Studio (default C:\tizen-studio): "
 )
 
 if not exist "%TIZEN_DIR%\tools\sdb.exe" (
-    echo [CHYBA / ERROR] Nebyl nalezen %TIZEN_DIR%\tools\sdb.exe!
-    echo Nainstalujte nejdrive Tizen Studio (https://developer.tizen.org/development/tizen-studio/download).
+    echo [ERROR / CHYBA] Not found / Nebyl nalezen: %TIZEN_DIR%\tools\sdb.exe!
+    echo Please install Tizen Studio first (https://developer.tizen.org/development/tizen-studio/download).
     pause
     exit /b 1
 )
@@ -27,31 +27,31 @@ for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "$p='C:\tizen-
 )
 
 if not "%DETECTED_PROFILE%"=="" (
-    echo [INFO] Nalezen certifikacni profil v Tizen Studiu: %DETECTED_PROFILE%
-    set /p CERT_PROFILE="Nazev vaseho certifikatu [%DETECTED_PROFILE%] (stisknete Enter pro potvrzeni): "
+    echo [INFO] Detected Tizen Certificate Profile / Nalezen certifikacni profil: %DETECTED_PROFILE%
+    set /p CERT_PROFILE="Certificate profile name / Nazev certifikatu [%DETECTED_PROFILE%] (Press Enter to confirm): "
     if "!CERT_PROFILE!"=="" set "CERT_PROFILE=%DETECTED_PROFILE%"
 ) else (
-    set /p CERT_PROFILE="Zadejte nazev vaseho certifikacniho profilu v Tizen Certificate Manageru: "
+    set /p CERT_PROFILE="Enter your Tizen Certificate Profile name / Zadejte nazev certifikacniho profilu: "
 )
 
-set /p TV_IP="Zadejte IP adresu vasi Samsung TV (napr. 192.168.1.50): "
+set /p TV_IP="Enter your Samsung TV IP address / Zadejte IP adresu Samsung TV (e.g. 192.168.1.50): "
 if "%TV_IP%"=="" (
-    echo [CHYBA / ERROR] Musite zadat IP adresu televize!
+    echo [ERROR / CHYBA] TV IP address is required / Musite zadat IP adresu televize!
     pause
     exit /b 1
 )
 
 echo.
-echo [1/4] Pripojuji se k televizi %TV_IP%:26101...
+echo [1/4] Connecting to TV / Pripojuji se k televizi %TV_IP%:26101...
 "%TIZEN_DIR%\tools\sdb.exe" connect %TV_IP%
 if errorlevel 1 (
-    echo [CHYBA] Nepodarilo se pripojit k %TV_IP%. Zkontrolujte, ze je v TV zapnuty Developer Mode a TV je zapnuta.
+    echo [ERROR / CHYBA] Failed to connect to %TV_IP%. Ensure Developer Mode is ON on your TV.
     pause
     exit /b 1
 )
 
 echo.
-echo [2/4] Sestavuji a podepisuji balicek YouTubePremium.wgt certifikatem "%CERT_PROFILE%"...
+echo [2/4] Building ^& signing YouTubePremium.wgt with certificate "%CERT_PROFILE%"...
 set "PROJECT_DIR=%~dp0"
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
@@ -72,18 +72,18 @@ del /q "%PROJECT_DIR%\signature1.xml" 2>nul
 del /q "%PROJECT_DIR%\.manifest.tmp" 2>nul
 
 if not exist "%BUILD_DIR%\YouTubePremium.wgt" (
-    echo [CHYBA / ERROR] Nepodarilo se vytvorit YouTubePremium.wgt. Zkontrolujte nazev profilu "%CERT_PROFILE%".
+    echo [ERROR / CHYBA] Failed to build YouTubePremium.wgt. Check profile name "%CERT_PROFILE%".
     rd /s /q "%BUILD_DIR%" 2>nul
     pause
     exit /b 1
 )
 
 echo.
-echo [3/4] Nahravam YouTubePremium.wgt do televize...
+echo [3/4] Pushing YouTubePremium.wgt to TV / Nahravam do televize...
 "%TIZEN_DIR%\tools\sdb.exe" -s %TV_IP%:26101 push "%BUILD_DIR%\YouTubePremium.wgt" "/home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt"
 
 echo.
-echo [4/4] Instaluji aplikaci do Samsung TV...
+echo [4/4] Installing app on Samsung TV / Instaluji aplikaci do TV...
 "%TIZEN_DIR%\tools\sdb.exe" -s %TV_IP%:26101 shell 0 vd_appinstall xvvl3S1bvH.TizenBrewStandalone /home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt
 
 :: Clean up temporary .wgt both on PC and on TV after installation
@@ -92,7 +92,7 @@ rd /s /q "%BUILD_DIR%" 2>nul
 
 echo.
 echo ============================================================================
-echo   HOTOVO! Aplikace YouTubePremium je nainstalovana v televizi (sekce Apps)
-echo   a docasne soubory .wgt byly automaticky uklizeny.
+echo   DONE / HOTOVO! YouTubePremium is installed on your TV (Apps section).
+echo   Temporary .wgt files were automatically cleaned up.
 echo ============================================================================
 pause
