@@ -54,22 +54,29 @@ echo.
 echo [2/4] Sestavuji a podepisuji balicek YouTubePremium.wgt certifikatem "%CERT_PROFILE%"...
 set "PROJECT_DIR=%~dp0"
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
-set "BUILD_DIR=%PROJECT_DIR%\build"
-if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
-del /q "%BUILD_DIR%\*.wgt" 2>nul
+
+:: Build outside PROJECT_DIR (%TEMP%) so a .wgt can NEVER be nested inside the package
+set "BUILD_DIR=%TEMP%\YouTubePremium_Tizen3_Build"
+if exist "%BUILD_DIR%" rd /s /q "%BUILD_DIR%" 2>nul
+mkdir "%BUILD_DIR%"
 del /q "%PROJECT_DIR%\*.wgt" 2>nul
-
-call "%TIZEN_DIR%\tools\ide\bin\tizen.bat" package -t wgt -s "%CERT_PROFILE%" -o "%BUILD_DIR%" -- "%PROJECT_DIR%"
-if not exist "%BUILD_DIR%\YouTubePremium.wgt" (
-    echo [CHYBA / ERROR] Nepodarilo se vytvorit YouTubePremium.wgt. Zkontrolujte nazev profilu "%CERT_PROFILE%".
-    pause
-    exit /b 1
-)
-
-:: Clean temporary personal signature XMLs from project root so Git stays clean
 del /q "%PROJECT_DIR%\author-signature.xml" 2>nul
 del /q "%PROJECT_DIR%\signature1.xml" 2>nul
 del /q "%PROJECT_DIR%\.manifest.tmp" 2>nul
+
+call "%TIZEN_DIR%\tools\ide\bin\tizen.bat" package -t wgt -s "%CERT_PROFILE%" -o "%BUILD_DIR%" -- "%PROJECT_DIR%"
+
+:: Immediately clean temporary signature XMLs from project root
+del /q "%PROJECT_DIR%\author-signature.xml" 2>nul
+del /q "%PROJECT_DIR%\signature1.xml" 2>nul
+del /q "%PROJECT_DIR%\.manifest.tmp" 2>nul
+
+if not exist "%BUILD_DIR%\YouTubePremium.wgt" (
+    echo [CHYBA / ERROR] Nepodarilo se vytvorit YouTubePremium.wgt. Zkontrolujte nazev profilu "%CERT_PROFILE%".
+    rd /s /q "%BUILD_DIR%" 2>nul
+    pause
+    exit /b 1
+)
 
 echo.
 echo [3/4] Nahravam YouTubePremium.wgt do televize...
@@ -79,8 +86,13 @@ echo.
 echo [4/4] Instaluji aplikaci do Samsung TV...
 "%TIZEN_DIR%\tools\sdb.exe" -s %TV_IP%:26101 shell 0 vd_appinstall xvvl3S1bvH.TizenBrewStandalone /home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt
 
+:: Clean up temporary .wgt both on PC and on TV after installation
+rd /s /q "%BUILD_DIR%" 2>nul
+"%TIZEN_DIR%\tools\sdb.exe" -s %TV_IP%:26101 shell 0 rm -f /home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt >nul 2>&1
+
 echo.
 echo ============================================================================
-echo   HOTOVO! Aplikace YouTubePremium je nainstalovana v televizi (sekce Apps).
+echo   HOTOVO! Aplikace YouTubePremium je nainstalovana v televizi (sekce Apps)
+echo   a docasne soubory .wgt byly automaticky uklizeny.
 echo ============================================================================
 pause
