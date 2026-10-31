@@ -1,0 +1,10 @@
+# Never commit personal Samsung Tizen certificates or device-signed files
+author-signature.xml
+signature*.xml
+.manifest.tmp
+.delta.lst
+*.wgt
+*.p12
+*.pri
+build/
+dist_wgt/
