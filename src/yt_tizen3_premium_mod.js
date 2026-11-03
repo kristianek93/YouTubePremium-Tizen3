@@ -75,6 +75,7 @@
 
   var isFirstLoad = !window.__ttPremiumModLoaded;
   window.__ttPremiumModLoaded = true;
+  window.__ttPremiumModLoadedV4 = true;
   console.info('[TT-Premium] Initializing Tizen 3.0 Art Track Fix + Back Mini-Player + Smart Remote Keys...');
 
   if (!Object.values) {
@@ -184,16 +185,39 @@
         ps.triggerAudioPlaybackWarning = function () {};
       }
     }
-    if (!ps.__ttSeamlessPipPatchedV2) {
-      ps.__ttSeamlessPipPatchedV2 = true;
+    if (!ps.__ttSeamlessPipPatchedV3) {
+      ps.__ttSeamlessPipPatchedV3 = true;
       var origPsStop = ps.__ttOrigStop || ps.stop;
       ps.__ttOrigStop = origPsStop;
       if (typeof origPsStop === 'function') {
         ps.stop = function (a, b) {
-          if ((window.__ttSuppressStop || window.isPipPlaying) && !b) {
+          if (window.__ttReturningFromPip || window.__ttSuppressStop || (window.isPipPlaying && !b)) {
             return;
           }
           return origPsStop.apply(this, arguments);
+        };
+      }
+      var origPsPause = ps.__ttOrigPause || ps.pause;
+      ps.__ttOrigPause = origPsPause;
+      if (typeof origPsPause === 'function') {
+        ps.pause = function () {
+          if (
+            window.__ttReturningFromPip ||
+            (window.__ttPipPauseDelayTimer && !window.__ttAllowPipPause)
+          ) {
+            return;
+          }
+          return origPsPause.apply(this, arguments);
+        };
+      }
+      var origPsSeekTo = ps.__ttOrigSeekTo || ps.seekTo;
+      ps.__ttOrigSeekTo = origPsSeekTo;
+      if (typeof origPsSeekTo === 'function') {
+        ps.seekTo = function () {
+          if (window.__ttReturningFromPip) {
+            return;
+          }
+          return origPsSeekTo.apply(this, arguments);
         };
       }
       var origPsLoadVideo = ps.__ttOrigLoadVideo || ps.loadVideo;
@@ -606,6 +630,26 @@
         return origGetQuality.apply(this, arguments);
       };
     }
+
+    try {
+      if (
+        typeof HTMLVideoElement !== 'undefined' &&
+        HTMLVideoElement.prototype &&
+        !HTMLVideoElement.prototype.__ttPausePatchedV1
+      ) {
+        HTMLVideoElement.prototype.__ttPausePatchedV1 = true;
+        var origVideoPause = HTMLVideoElement.prototype.pause;
+        HTMLVideoElement.prototype.pause = function () {
+          if (
+            window.__ttReturningFromPip ||
+            (window.__ttPipPauseDelayTimer && !window.__ttAllowPipPause)
+          ) {
+            return;
+          }
+          return origVideoPause.apply(this, arguments);
+        };
+      }
+    } catch (e) {}
 
     try {
       var desc = Object.getOwnPropertyDescriptor(
@@ -1113,6 +1157,7 @@
     var videoEl = document.querySelector('video');
     var ytlrPlayer = document.querySelector('ytlr-player');
     var ytlrPlayerContainer = document.querySelector('ytlr-player-container');
+    var wasPaused = !!(videoEl && videoEl.paused);
 
     // 1. INSTANT (0ms) visual maximize & resume on top of current screen
     window.__ttReturningFromPip = true;
@@ -1128,17 +1173,11 @@
     }
     resetVideoFullscreenStyles();
     update1x1Overlay();
-    resumePlaybackReliably(ps, videoEl);
-
-    // 2. Navigate YouTube TV UI back to #/watch in the background without stopping playback
-    var resumeSec = Math.max(
-      Math.floor((videoEl && videoEl.currentTime) || 0),
-      Math.floor(window.__ttLastPlaybackTime || 0)
-    );
-    cfg.startTime = resumeSec;
-    if (cfg.watchEndpoint) {
-      cfg.watchEndpoint.startTimeSeconds = resumeSec;
+    if (wasPaused) {
+      resumePlaybackReliably(ps, videoEl);
     }
+
+    // 2. Navigate YouTube TV UI back to #/watch in the background without stopping or seeking playback
     var command = {
       clickTrackingParams: cfg.clickTrackingParams,
       commandMetadata: cfg.commandMetadata,
@@ -1162,12 +1201,14 @@
     }, 120);
 
     setTimeout(function () {
-      resumePlaybackReliably(ps, videoEl);
+      if (videoEl && videoEl.paused) {
+        resumePlaybackReliably(ps, videoEl);
+      }
     }, 120);
     setTimeout(function () {
       window.__ttSuppressStop = false;
       window.__ttReturningFromPip = false;
-    }, 3500);
+    }, 1800);
   }
 
   function patchResolveCommandForPip() {
@@ -1367,13 +1408,16 @@
         }
       } else {
         if (window.isPipPlaying) {
-          // 0.5s delay before pausing in Mini-Player so a double-press maximizes seamlessly
+          // 0.6s delay before pausing in Mini-Player so a double-press maximizes seamlessly with 0ms pause
+          window.__ttAllowPipPause = false;
           window.__ttPipPauseDelayTimer = setTimeout(function () {
             window.__ttPipPauseDelayTimer = null;
             if (window.isPipPlaying) {
+              window.__ttAllowPipPause = true;
               pausePlaybackReliably(getPlayerService(), document.querySelector('video'));
+              window.__ttAllowPipPause = false;
             }
-          }, 500);
+          }, 600);
         } else {
           pausePlaybackReliably(ps, videoEl);
         }

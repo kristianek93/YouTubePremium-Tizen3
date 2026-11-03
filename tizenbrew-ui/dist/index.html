@@ -91,6 +91,14 @@
       var attempts = 0;
       var maxAttempts = 10;
       var launchInFlight = false;
+      var isRelaunchedWindow = false;
+
+      try {
+        var lastRelaunchTs = Number(localStorage.getItem('__ttDebugRelaunchTs') || '0');
+        if (lastRelaunchTs > 0 && (Date.now() - lastRelaunchTs) < 30000) {
+          isRelaunchedWindow = true;
+        }
+      } catch (e) {}
 
       function startService() {
         try {
@@ -108,14 +116,18 @@
         // Trigger local Tizen Node.js background service (127.0.0.1:8081)
         try {
           var xhr = new XMLHttpRequest();
-          xhr.open('GET', 'http://127.0.0.1:8081/launch?t=' + Date.now(), true);
+          var q = isRelaunchedWindow ? '&alreadyRelaunched=1' : '';
+          xhr.open('GET', 'http://127.0.0.1:8081/launch?t=' + Date.now() + q, true);
           xhr.timeout = 2500;
           xhr.onload = function () {
             launchInFlight = false;
             try {
               var resp = JSON.parse(xhr.responseText || '{}');
-              if (resp && resp.relaunchingInDebug) {
-                statusEl.textContent = 'Restartuji do servisního režimu s úpravami...';
+              if (resp && resp.relaunchingInDebug && !isRelaunchedWindow) {
+                try {
+                  localStorage.setItem('__ttDebugRelaunchTs', String(Date.now()));
+                } catch (eLs) {}
+                statusEl.textContent = 'Spouštím YouTube Premium...';
                 try {
                   tizen.application.getCurrentApplication().exit();
                 } catch (eExit) {}
