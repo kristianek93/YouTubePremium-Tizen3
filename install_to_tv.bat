@@ -42,13 +42,20 @@ if "%TV_IP%"=="" (
 )
 
 echo.
-echo [1/4] Connecting to TV / Pripojuji se k televizi %TV_IP%:26101...
-"%TIZEN_DIR%\tools\sdb.exe" connect %TV_IP%
+echo [1/4] Connecting to TV / Pripojuji se k televizi %TV_IP%...
+set "TV_TARGET=%TV_IP%:26101"
+"%TIZEN_DIR%\tools\sdb.exe" connect %TV_IP%:26101 | findstr /i "connected" >nul
 if errorlevel 1 (
-    echo [ERROR / CHYBA] Failed to connect to %TV_IP%. Ensure Developer Mode is ON on your TV.
-    pause
-    exit /b 1
+    echo [INFO] Port 26101 is in 127.0.0.1 standalone mode, trying built-in SDB Bridge on port 26102...
+    "%TIZEN_DIR%\tools\sdb.exe" connect %TV_IP%:26102 | findstr /i "connected" >nul
+    if errorlevel 1 (
+        echo [ERROR / CHYBA] Failed to connect to %TV_IP% on port 26101 or 26102.
+        pause
+        exit /b 1
+    )
+    set "TV_TARGET=%TV_IP%:26102"
 )
+echo [OK] Connected to %TV_TARGET%!
 
 echo.
 echo [2/4] Building ^& signing YouTubePremium.wgt with certificate "%CERT_PROFILE%"...
@@ -80,15 +87,15 @@ if not exist "%BUILD_DIR%\YouTubePremium.wgt" (
 
 echo.
 echo [3/4] Pushing YouTubePremium.wgt to TV / Nahravam do televize...
-"%TIZEN_DIR%\tools\sdb.exe" -s %TV_IP%:26101 push "%BUILD_DIR%\YouTubePremium.wgt" "/home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt"
+"%TIZEN_DIR%\tools\sdb.exe" -s %TV_TARGET% push "%BUILD_DIR%\YouTubePremium.wgt" "/home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt"
 
 echo.
 echo [4/4] Installing app on Samsung TV / Instaluji aplikaci do TV...
-"%TIZEN_DIR%\tools\sdb.exe" -s %TV_IP%:26101 shell 0 vd_appinstall xvvl3S1bvH.TizenBrewStandalone /home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt
+"%TIZEN_DIR%\tools\sdb.exe" -s %TV_TARGET% shell 0 vd_appinstall xvvl3S1bvH.TizenBrewStandalone /home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt
 
 :: Clean up temporary .wgt both on PC and on TV after installation
 rd /s /q "%BUILD_DIR%" 2>nul
-"%TIZEN_DIR%\tools\sdb.exe" -s %TV_IP%:26101 shell 0 rm -f /home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt >nul 2>&1
+"%TIZEN_DIR%\tools\sdb.exe" -s %TV_TARGET% shell 0 rm -f /home/owner/share/tmp/sdk_tools/tmp/YouTubePremium.wgt >nul 2>&1
 
 echo.
 echo ============================================================================

@@ -184,8 +184,8 @@
         ps.triggerAudioPlaybackWarning = function () {};
       }
     }
-    if (!ps.__ttSeamlessPipPatched) {
-      ps.__ttSeamlessPipPatched = true;
+    if (!ps.__ttSeamlessPipPatchedV2) {
+      ps.__ttSeamlessPipPatchedV2 = true;
       var origPsStop = ps.__ttOrigStop || ps.stop;
       ps.__ttOrigStop = origPsStop;
       if (typeof origPsStop === 'function') {
@@ -201,7 +201,6 @@
       if (typeof origPsLoadVideo === 'function') {
         ps.loadVideo = function (a) {
           if (window.__ttReturningFromPip) {
-            window.__ttReturningFromPip = false;
             var videoEl = document.querySelector('video');
             var curVid =
               this.loadedPlaybackConfig &&
@@ -213,8 +212,7 @@
               reqVid &&
               curVid === reqVid &&
               videoEl &&
-              this.isPlaybackInitiated &&
-              this.state > 0
+              (videoEl.readyState >= 1 || this.isPlaybackInitiated)
             ) {
               this.Oe = a;
               return Promise.resolve();
@@ -1105,10 +1103,34 @@
   }
 
   function pipToFullscreen() {
+    if (window.__ttPipPauseDelayTimer) {
+      clearTimeout(window.__ttPipPauseDelayTimer);
+      window.__ttPipPauseDelayTimer = null;
+    }
     var ps = getPlayerService();
     var cfg = (ps && ps.loadedPlaybackConfig) || window.__ttLastPlaybackConfig;
     if (!ps || !cfg) return;
     var videoEl = document.querySelector('video');
+    var ytlrPlayer = document.querySelector('ytlr-player');
+    var ytlrPlayerContainer = document.querySelector('ytlr-player-container');
+
+    // 1. INSTANT (0ms) visual maximize & resume on top of current screen
+    window.__ttReturningFromPip = true;
+    window.__ttSuppressStop = true;
+    window.isPipPlaying = false;
+
+    if (ytlrPlayerContainer) {
+      ytlrPlayerContainer.style.zIndex = '10';
+    }
+    if (ytlrPlayer) {
+      ytlrPlayer.style.display = 'block';
+      ytlrPlayer.style.backgroundColor = '#000';
+    }
+    resetVideoFullscreenStyles();
+    update1x1Overlay();
+    resumePlaybackReliably(ps, videoEl);
+
+    // 2. Navigate YouTube TV UI back to #/watch in the background without stopping playback
     var resumeSec = Math.max(
       Math.floor((videoEl && videoEl.currentTime) || 0),
       Math.floor(window.__ttLastPlaybackTime || 0)
@@ -1122,17 +1144,30 @@
       commandMetadata: cfg.commandMetadata,
       watchEndpoint: cfg.watchEndpoint
     };
-    window.__ttReturningFromPip = true;
-    window.__ttSuppressStop = true;
-    window.isPipPlaying = false;
-    var ytlrPlayerContainer = document.querySelector('ytlr-player-container');
-    if (ytlrPlayerContainer) ytlrPlayerContainer.style.removeProperty('z-index');
-    resetVideoFullscreenStyles();
     resolveCommand(command);
+
+    // Release temporary z-index only AFTER #/watch route is active so player UI overlays work
+    var checkAttempts = 0;
+    var zIndexTimer = setInterval(function () {
+      checkAttempts++;
+      var onWatch = ((window.location && window.location.hash) || '').indexOf('#/watch') === 0;
+      if (onWatch || checkAttempts >= 25) {
+        clearInterval(zIndexTimer);
+        if (!window.isPipPlaying) {
+          if (ytlrPlayerContainer) ytlrPlayerContainer.style.removeProperty('z-index');
+          if (ytlrPlayer) ytlrPlayer.style.removeProperty('background-color');
+          resetVideoFullscreenStyles();
+        }
+      }
+    }, 120);
+
+    setTimeout(function () {
+      resumePlaybackReliably(ps, videoEl);
+    }, 120);
     setTimeout(function () {
       window.__ttSuppressStop = false;
       window.__ttReturningFromPip = false;
-    }, 1000);
+    }, 3500);
   }
 
   function patchResolveCommandForPip() {
@@ -1143,8 +1178,8 @@
         window._yttv[key].instance &&
         typeof window._yttv[key].instance.resolveCommand === 'function'
       ) {
-        if (window._yttv[key].instance.__ttResolvePatchedV2) return true;
-        window._yttv[key].instance.__ttResolvePatchedV2 = true;
+        if (window._yttv[key].instance.__ttResolvePatchedV3) return true;
+        window._yttv[key].instance.__ttResolvePatchedV3 = true;
         var ogResolve =
           window._yttv[key].instance.__ttOrigResolve || window._yttv[key].instance.resolveCommand;
         window._yttv[key].instance.__ttOrigResolve = ogResolve;
@@ -1208,21 +1243,43 @@
             }
           } catch (eMenu) {}
           if (cmd && cmd.watchEndpoint && cmd.watchEndpoint.videoId) {
+            var ytlrPlayerContainer = document.querySelector('ytlr-player-container');
+            var ytlrPlayer = document.querySelector('ytlr-player');
             if (window.isPipPlaying && cmd.watchEndpoint.videoId === getActiveVideoIdFromPlayer()) {
               window.__ttReturningFromPip = true;
               window.__ttSuppressStop = true;
+              window.isPipPlaying = false;
+              if (ytlrPlayerContainer) ytlrPlayerContainer.style.zIndex = '10';
+              if (ytlrPlayer) {
+                ytlrPlayer.style.display = 'block';
+                ytlrPlayer.style.backgroundColor = '#000';
+              }
+              resetVideoFullscreenStyles();
+              update1x1Overlay();
+              var watchPoll = 0;
+              var watchTimer = setInterval(function () {
+                watchPoll++;
+                var onWatch = ((window.location && window.location.hash) || '').indexOf('#/watch') === 0;
+                if (onWatch || watchPoll >= 25) {
+                  clearInterval(watchTimer);
+                  if (!window.isPipPlaying) {
+                    if (ytlrPlayerContainer) ytlrPlayerContainer.style.removeProperty('z-index');
+                    if (ytlrPlayer) ytlrPlayer.style.removeProperty('background-color');
+                    resetVideoFullscreenStyles();
+                  }
+                }
+              }, 120);
               setTimeout(function () {
                 window.__ttSuppressStop = false;
                 window.__ttReturningFromPip = false;
-              }, 1000);
+              }, 3500);
             } else {
               window.__ttReturningFromPip = false;
               window.__ttSuppressStop = false;
+              window.isPipPlaying = false;
+              if (ytlrPlayerContainer) ytlrPlayerContainer.style.removeProperty('z-index');
+              resetVideoFullscreenStyles();
             }
-            window.isPipPlaying = false;
-            var ytlrPlayerContainer = document.querySelector('ytlr-player-container');
-            if (ytlrPlayerContainer) ytlrPlayerContainer.style.removeProperty('z-index');
-            resetVideoFullscreenStyles();
           }
           return ogResolve.call(this, cmd, extra);
         };
@@ -1283,18 +1340,43 @@
       if (typeof evt.stopImmediatePropagation === 'function') {
         evt.stopImmediatePropagation();
       }
+      if (evt.repeat) {
+        return true;
+      }
       var nowTs = Date.now();
-      if (window.__ttLastPlayPauseTs && nowTs - window.__ttLastPlayPauseTs < 200) {
+      if (window.__ttLastPlayPauseTs && nowTs - window.__ttLastPlayPauseTs < 55) {
         return true;
       }
       window.__ttLastPlayPauseTs = nowTs;
+
+      // Double-press Play/Pause while Mini-Player is playing (< 0.5s):
+      // cancel the 0.5s delayed pause and immediately maximize to Fullscreen without ever pausing!
+      if (window.isPipPlaying && window.__ttPipPauseDelayTimer) {
+        clearTimeout(window.__ttPipPauseDelayTimer);
+        window.__ttPipPauseDelayTimer = null;
+        pipToFullscreen();
+        return true;
+      }
 
       var isPaused =
         (videoEl && videoEl.paused) || (ps && (!ps.isPlaying || ps.state === 2));
       if (isPaused) {
         resumePlaybackReliably(ps, videoEl);
+        if (window.isPipPlaying) {
+          pipToFullscreen();
+        }
       } else {
-        pausePlaybackReliably(ps, videoEl);
+        if (window.isPipPlaying) {
+          // 0.5s delay before pausing in Mini-Player so a double-press maximizes seamlessly
+          window.__ttPipPauseDelayTimer = setTimeout(function () {
+            window.__ttPipPauseDelayTimer = null;
+            if (window.isPipPlaying) {
+              pausePlaybackReliably(getPlayerService(), document.querySelector('video'));
+            }
+          }, 500);
+        } else {
+          pausePlaybackReliably(ps, videoEl);
+        }
       }
       return true;
     }
@@ -1305,7 +1387,13 @@
       if (typeof evt.stopImmediatePropagation === 'function') {
         evt.stopImmediatePropagation();
       }
+      var wasPausedInPip =
+        window.isPipPlaying &&
+        ((videoEl && videoEl.paused) || (ps && (!ps.isPlaying || ps.state === 2)));
       resumePlaybackReliably(ps, videoEl);
+      if (wasPausedInPip) {
+        pipToFullscreen();
+      }
       return true;
     }
     // 19 = MediaPause, 74 = Keyboard Pause

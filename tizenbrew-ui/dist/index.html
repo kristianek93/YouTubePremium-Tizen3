@@ -98,9 +98,33 @@
         try {
           var xhr = new XMLHttpRequest();
           xhr.open('GET', 'http://127.0.0.1:8081/launch?t=' + Date.now(), true);
-          xhr.timeout = 3500;
+          xhr.timeout = 4000;
+          xhr.onload = function () {
+            try {
+              var resp = JSON.parse(xhr.responseText || '{}');
+              if (resp && resp.ok === false) {
+                statusEl.style.color = '#fbbf24';
+                statusEl.textContent = 'Tip: Pro samostatný start s modifikací nastavte v Apps -> 12345 Host PC IP na 127.0.0.1. Otevírám YouTube TV...';
+                setTimeout(function () {
+                  window.location.replace('https://www.youtube.com/tv');
+                }, 2200);
+              }
+            } catch (e) {}
+          };
+          xhr.onerror = function () {
+            setTimeout(function () {
+              window.location.replace('https://www.youtube.com/tv');
+            }, 2500);
+          };
+          xhr.ontimeout = function () {
+            window.location.replace('https://www.youtube.com/tv');
+          };
           xhr.send();
-        } catch (e) {}
+        } catch (e) {
+          setTimeout(function () {
+            window.location.replace('https://www.youtube.com/tv');
+          }, 2500);
+        }
       }
 
       if (btn) {
