@@ -76,6 +76,7 @@
   var isFirstLoad = !window.__ttPremiumModLoaded;
   window.__ttPremiumModLoaded = true;
   window.__ttPremiumModLoadedV4 = true;
+  window.__ttPremiumModLoadedV5 = true;
   console.info('[TT-Premium] Initializing Tizen 3.0 Art Track Fix + Back Mini-Player + Smart Remote Keys...');
 
   if (!Object.values) {
@@ -185,8 +186,8 @@
         ps.triggerAudioPlaybackWarning = function () {};
       }
     }
-    if (!ps.__ttSeamlessPipPatchedV3) {
-      ps.__ttSeamlessPipPatchedV3 = true;
+    if (!ps.__ttSeamlessPipPatchedV5) {
+      ps.__ttSeamlessPipPatchedV5 = true;
       var origPsStop = ps.__ttOrigStop || ps.stop;
       ps.__ttOrigStop = origPsStop;
       if (typeof origPsStop === 'function') {
@@ -227,9 +228,10 @@
           if (window.__ttReturningFromPip) {
             var videoEl = document.querySelector('video');
             var curVid =
-              this.loadedPlaybackConfig &&
-              this.loadedPlaybackConfig.watchEndpoint &&
-              this.loadedPlaybackConfig.watchEndpoint.videoId;
+              (this.loadedPlaybackConfig &&
+                this.loadedPlaybackConfig.watchEndpoint &&
+                this.loadedPlaybackConfig.watchEndpoint.videoId) ||
+              getActiveVideoIdFromPlayer();
             var reqVid = a && a.watchEndpoint && a.watchEndpoint.videoId;
             if (
               curVid &&
@@ -238,8 +240,25 @@
               videoEl &&
               (videoEl.readyState >= 1 || this.isPlaybackInitiated)
             ) {
-              this.Oe = a;
-              return Promise.resolve();
+              if (typeof this.setLoadedPlaybackConfig === 'function') {
+                this.setLoadedPlaybackConfig(a);
+              } else {
+                this.Pe = a;
+                this.Oe = a;
+              }
+              var p = this.Hs || Promise.resolve();
+              if (p && typeof p.thenCatch !== 'function') {
+                p.thenCatch = function () {
+                  return p;
+                };
+                p.always = function (cb) {
+                  try {
+                    if (cb) cb();
+                  } catch (e) {}
+                  return p;
+                };
+              }
+              return p;
             }
           }
           return origPsLoadVideo.apply(this, arguments);
@@ -1219,8 +1238,8 @@
         window._yttv[key].instance &&
         typeof window._yttv[key].instance.resolveCommand === 'function'
       ) {
-        if (window._yttv[key].instance.__ttResolvePatchedV3) return true;
-        window._yttv[key].instance.__ttResolvePatchedV3 = true;
+        if (window._yttv[key].instance.__ttResolvePatchedV5) return true;
+        window._yttv[key].instance.__ttResolvePatchedV5 = true;
         var ogResolve =
           window._yttv[key].instance.__ttOrigResolve || window._yttv[key].instance.resolveCommand;
         window._yttv[key].instance.__ttOrigResolve = ogResolve;
@@ -1286,7 +1305,10 @@
           if (cmd && cmd.watchEndpoint && cmd.watchEndpoint.videoId) {
             var ytlrPlayerContainer = document.querySelector('ytlr-player-container');
             var ytlrPlayer = document.querySelector('ytlr-player');
-            if (window.isPipPlaying && cmd.watchEndpoint.videoId === getActiveVideoIdFromPlayer()) {
+            if (
+              (window.isPipPlaying || window.__ttReturningFromPip) &&
+              cmd.watchEndpoint.videoId === getActiveVideoIdFromPlayer()
+            ) {
               window.__ttReturningFromPip = true;
               window.__ttSuppressStop = true;
               window.isPipPlaying = false;
