@@ -32,7 +32,7 @@
     <tizen:privilege name="http://tizen.org/privilege/unlimitedstorage"/>
     <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
     <tizen:profile name="tv-samsung"/>
-    <tizen:service id="xvvl3S1bvH.StandaloneService">
+    <tizen:service id="xvvl3S1bvH.StandaloneService" auto-restart="true" on-boot="true">
         <tizen:content src="service-nextgen/service/dist/index.js"/>
         <tizen:name>TizenBrewService</tizen:name>
         <tizen:description>TizenBrewService</tizen:description>

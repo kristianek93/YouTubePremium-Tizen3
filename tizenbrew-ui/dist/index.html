@@ -88,57 +88,100 @@
         }
       } catch (e) {}
 
-      function triggerLaunch() {
-        statusEl.textContent = 'Připojuji opravy přehrávače a otevírám YouTube TV...';
+      var attempts = 0;
+      var maxAttempts = 10;
+      var launchInFlight = false;
+
+      function startService() {
         try {
           tizen.application.launch('xvvl3S1bvH.StandaloneService', function () {}, function () {});
         } catch (e) {}
+      }
+
+      function triggerLaunch() {
+        if (launchInFlight) return;
+        launchInFlight = true;
+        attempts++;
+        statusEl.textContent = 'Připojuji opravy přehrávače a otevírám YouTube TV...';
+        startService();
 
         // Trigger local Tizen Node.js background service (127.0.0.1:8081)
         try {
           var xhr = new XMLHttpRequest();
           xhr.open('GET', 'http://127.0.0.1:8081/launch?t=' + Date.now(), true);
-          xhr.timeout = 4000;
+          xhr.timeout = 2500;
           xhr.onload = function () {
+            launchInFlight = false;
             try {
               var resp = JSON.parse(xhr.responseText || '{}');
-              if (resp && resp.ok === false) {
-                statusEl.style.color = '#fbbf24';
-                statusEl.textContent = 'Tip: Pro samostatný start s modifikací nastavte v Apps -> 12345 Host PC IP na 127.0.0.1. Otevírám YouTube TV...';
-                setTimeout(function () {
-                  window.location.replace('https://www.youtube.com/tv');
-                }, 2200);
+              if (resp && resp.relaunchingInDebug) {
+                statusEl.textContent = 'Restartuji do servisního režimu s úpravami...';
+                try {
+                  tizen.application.getCurrentApplication().exit();
+                } catch (eExit) {}
+                return;
               }
-            } catch (e) {}
+              if (resp && resp.ok) {
+                window.location.replace('https://www.youtube.com/tv');
+                return;
+              }
+              if (attempts < maxAttempts) {
+                setTimeout(triggerLaunch, 500);
+              } else {
+                window.location.replace('https://www.youtube.com/tv');
+              }
+            } catch (e) {
+              if (attempts < maxAttempts) {
+                setTimeout(triggerLaunch, 500);
+              } else {
+                window.location.replace('https://www.youtube.com/tv');
+              }
+            }
           };
           xhr.onerror = function () {
-            setTimeout(function () {
+            launchInFlight = false;
+            if (attempts < maxAttempts) {
+              setTimeout(triggerLaunch, 500);
+            } else {
               window.location.replace('https://www.youtube.com/tv');
-            }, 2500);
+            }
           };
           xhr.ontimeout = function () {
-            window.location.replace('https://www.youtube.com/tv');
+            launchInFlight = false;
+            if (attempts < maxAttempts) {
+              setTimeout(triggerLaunch, 500);
+            } else {
+              window.location.replace('https://www.youtube.com/tv');
+            }
           };
           xhr.send();
         } catch (e) {
-          setTimeout(function () {
+          launchInFlight = false;
+          if (attempts < maxAttempts) {
+            setTimeout(triggerLaunch, 500);
+          } else {
             window.location.replace('https://www.youtube.com/tv');
-          }, 2500);
+          }
         }
       }
 
       if (btn) {
-        btn.onclick = triggerLaunch;
+        btn.onclick = function () {
+          attempts = 0;
+          triggerLaunch();
+        };
       }
       document.addEventListener('keydown', function (e) {
         if (e.keyCode === 13) {
+          attempts = 0;
           triggerLaunch();
         } else if (e.keyCode === 10009) {
           try { tizen.application.getCurrentApplication().exit(); } catch (err) {}
         }
       });
 
-      setTimeout(triggerLaunch, 300);
+      startService();
+      setTimeout(triggerLaunch, 250);
     })();
   </script>
 </body>

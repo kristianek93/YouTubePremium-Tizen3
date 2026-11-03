@@ -12,20 +12,39 @@ var EMBEDDED_YT_PREMIUM_MOD = "// YouTube TV Mod for Samsung Tizen 3.0 (QE75Q7FA
 var activeDebugPort = 0;
 var wsInjecting = false;
 var lastInjectOk = false;
+var relaunchPending = false;
+var activeProxySockets = [];
+
+function closeIdleProxySockets() {
+  for (var i = 0; i < activeProxySockets.length; i++) {
+    try { activeProxySockets[i].destroy(); } catch (e) {}
+  }
+  activeProxySockets = [];
+}
 
 function httpGetJson(host, port, reqPath, cb) {
-  var req = http.get({ host: host, port: port, path: reqPath, timeout: 2500 }, function (res) {
+  var done = false;
+  function finish(err, data) {
+    if (done) return;
+    done = true;
+    cb(err, data);
+  }
+  var req = http.get({ host: host, port: port, path: reqPath }, function (res) {
     var body = '';
     res.on('data', function (chunk) { body += chunk; });
     res.on('end', function () {
       try {
-        cb(null, JSON.parse(body));
+        finish(null, JSON.parse(body));
       } catch (e) {
-        cb(e, null);
+        finish(e, null);
       }
     });
   });
-  req.on('error', function (err) { cb(err, null); });
+  req.setTimeout(1000, function () {
+    try { req.abort(); } catch (e) {}
+    finish(new Error('timeout'), null);
+  });
+  req.on('error', function (err) { finish(err, null); });
 }
 
 function makeWsFrame(strPayload) {
@@ -80,6 +99,11 @@ function attachInspectorAndInject(debugPort) {
       }
     });
 
+    var safetyTimer = setTimeout(function () {
+      wsInjecting = false;
+      try { req.abort(); } catch (e) {}
+    }, 2000);
+
     req.on('upgrade', function (res, socket) {
       var msgId = 1;
       function sendCdp(method, params) {
@@ -90,7 +114,6 @@ function attachInspectorAndInject(debugPort) {
       }
 
       sendCdp('Runtime.enable', {});
-      sendCdp('Page.enable', {});
 
       if (pageUrl.indexOf('youtube.com/tv') === -1) {
         sendCdp('Runtime.evaluate', {
@@ -98,28 +121,29 @@ function attachInspectorAndInject(debugPort) {
         });
       } else {
         sendCdp('Runtime.evaluate', {
-          expression: EMBEDDED_YT_PREMIUM_MOD
+          expression: 'if (!window.__ttPremiumModLoaded) { ' + EMBEDDED_YT_PREMIUM_MOD + ' }'
         });
         lastInjectOk = true;
       }
 
-      var pollTimer = setInterval(function () {
-        sendCdp('Runtime.evaluate', {
-          expression: 'if (window.location.hostname.indexOf("youtube.com") !== -1 && !window.__ttPremiumModLoaded) { ' + EMBEDDED_YT_PREMIUM_MOD + ' }'
-        });
-      }, 1500);
+      setTimeout(function () {
+        clearTimeout(safetyTimer);
+        wsInjecting = false;
+        try { socket.destroy(); } catch (e) {}
+      }, 650);
 
       socket.on('close', function () {
-        clearInterval(pollTimer);
+        clearTimeout(safetyTimer);
         wsInjecting = false;
       });
       socket.on('error', function () {
-        clearInterval(pollTimer);
+        clearTimeout(safetyTimer);
         wsInjecting = false;
       });
     });
 
     req.on('error', function () {
+      clearTimeout(safetyTimer);
       wsInjecting = false;
     });
     req.end();
@@ -127,9 +151,11 @@ function attachInspectorAndInject(debugPort) {
 }
 
 function launchViaLocalSdb(appId, cb) {
+  closeIdleProxySockets();
   var sock = net.connect(26101, '127.0.0.1');
   var step = 0;
   var output = '';
+  var buf = new Buffer(0);
   var done = false;
   function finish(err, port) {
     if (done) return;
@@ -137,16 +163,19 @@ function launchViaLocalSdb(appId, cb) {
     try { sock.destroy(); } catch (e) {}
     cb(err, port);
   }
-  sock.setTimeout(5000, function () { finish(new Error('SDB timeout'), 0); });
+  sock.setTimeout(4500, function () {
+    var m = output.match(/port\s*:\s*(\d+)/i);
+    finish(m ? null : new Error('SDB timeout'), m ? parseInt(m[1], 10) : 0);
+  });
   sock.on('error', function (err) { finish(err, 0); });
 
-  function sendPacket(cmdStr, payloadStr) {
+  function sendPacket(cmdStr, arg0, arg1, payloadStr) {
     var cmdBuf = new Buffer(cmdStr, 'ascii');
     var payBuf = new Buffer(payloadStr || '', 'ascii');
     var hdr = new Buffer(24);
     hdr.write(cmdStr, 0, 4, 'ascii');
-    hdr.writeUInt32LE(cmdStr === 'CNXN' ? 0x01000000 : 1, 4);
-    hdr.writeUInt32LE(cmdStr === 'CNXN' ? 4096 : 0, 8);
+    hdr.writeUInt32LE(arg0 >>> 0, 4);
+    hdr.writeUInt32LE(arg1 >>> 0, 8);
     hdr.writeUInt32LE(payBuf.length, 12);
     var sum = 0;
     for (var i = 0; i < payBuf.length; i++) sum = (sum + payBuf[i]) >>> 0;
@@ -156,26 +185,58 @@ function launchViaLocalSdb(appId, cb) {
   }
 
   sock.on('connect', function () {
-    sendPacket('CNXN', 'host::\0');
+    sendPacket('CNXN', 0x01000000, 4096, 'host::\0');
   });
 
   sock.on('data', function (chunk) {
-    if (chunk.length >= 24) {
-      var cmd = chunk.slice(0, 4).toString('ascii');
-      var body = chunk.slice(24).toString('utf8');
+    buf = Buffer.concat([buf, chunk]);
+    while (buf.length >= 24) {
+      var cmd = buf.slice(0, 4).toString('ascii');
+      var a0 = buf.readUInt32LE(4);
+      var a1 = buf.readUInt32LE(8);
+      var dlen = buf.readUInt32LE(12);
+      if (buf.length < 24 + dlen) break;
+      var body = buf.slice(24, 24 + dlen).toString('utf8');
+      buf = buf.slice(24 + dlen);
+
       if (cmd === 'CNXN' && step === 0) {
         step = 1;
-        sendPacket('OPEN', 'shell:0 debug ' + appId + ' 0\0');
+        sendPacket('OPEN', 1, 0, 'shell:0 debug ' + appId + ' 0\0');
       } else if (cmd === 'WRTE') {
+        sendPacket('OKAY', a1 || 1, a0, '');
         output += body;
-        var m = output.match(/port\s*:\s*(\d+)/i) || output.match(/(\d{4,5})/);
+        var m = output.match(/port\s*:\s*(\d+)/i);
         if (m) {
           finish(null, parseInt(m[1], 10));
+          return;
         }
       } else if (cmd === 'CLSE' && step >= 1) {
-        var m2 = output.match(/port\s*:\s*(\d+)/i) || output.match(/(\d{4,5})/);
+        var m2 = output.match(/port\s*:\s*(\d+)/i);
         finish(null, m2 ? parseInt(m2[1], 10) : 0);
+        return;
       }
+    }
+  });
+}
+
+function performDebugRelaunch() {
+  launchViaLocalSdb('xvvl3S1bvH.TizenBrewStandalone', function (err, port) {
+    if (!err && port > 0) {
+      relaunchPending = false;
+      activeDebugPort = port;
+      setTimeout(function () { attachInspectorAndInject(port); }, 600);
+      setTimeout(function () { attachInspectorAndInject(port); }, 1400);
+    } else {
+      setTimeout(function () {
+        launchViaLocalSdb('xvvl3S1bvH.TizenBrewStandalone', function (err2, port2) {
+          relaunchPending = false;
+          if (!err2 && port2 > 0) {
+            activeDebugPort = port2;
+            setTimeout(function () { attachInspectorAndInject(port2); }, 600);
+            setTimeout(function () { attachInspectorAndInject(port2); }, 1400);
+          }
+        });
+      }, 900);
     }
   });
 }
@@ -194,28 +255,38 @@ module.exports.onStart = function () {
     var parsed = url.parse(req.url, true);
     if (parsed.pathname === '/status') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, debugPort: activeDebugPort, injected: lastInjectOk }));
+      res.end(JSON.stringify({ ok: true, debugPort: activeDebugPort, injected: lastInjectOk, relaunchPending: relaunchPending }));
       return;
     }
 
     if (parsed.pathname === '/launch') {
-      if (activeDebugPort > 0) {
-        attachInspectorAndInject(activeDebugPort);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, debugPort: activeDebugPort, reused: true }));
+      var checkPort = activeDebugPort;
+      if (checkPort > 0) {
+        httpGetJson('127.0.0.1', checkPort, '/json', function (err, pages) {
+          if (!err && Array.isArray(pages) && pages.length > 0) {
+            attachInspectorAndInject(checkPort);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, debugPort: checkPort, reused: true }));
+          } else {
+            activeDebugPort = 0;
+            wsInjecting = false;
+            if (!relaunchPending) {
+              relaunchPending = true;
+              setTimeout(performDebugRelaunch, 650);
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, relaunchingInDebug: true }));
+          }
+        });
         return;
       }
-      launchViaLocalSdb('xvvl3S1bvH.TizenBrewStandalone', function (err, port) {
-        if (!err && port > 0) {
-          activeDebugPort = port;
-          setTimeout(function () { attachInspectorAndInject(port); }, 900);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, debugPort: port }));
-        } else {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: err ? String(err) : 'no_port' }));
-        }
-      });
+
+      if (!relaunchPending) {
+        relaunchPending = true;
+        setTimeout(performDebugRelaunch, 650);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, relaunchingInDebug: true }));
       return;
     }
 
@@ -230,7 +301,14 @@ module.exports.onStart = function () {
   // while STILL allowing any PC/notebook on LAN to connect via `sdb connect <TV_IP>:26102`!
   try {
     var sdbProxy = net.createServer(function (clientSock) {
+      closeIdleProxySockets();
       var localSdb = net.connect(26101, '127.0.0.1');
+      activeProxySockets.push(localSdb);
+      activeProxySockets.push(clientSock);
+      clientSock.setTimeout(20000, function () {
+        try { localSdb.destroy(); } catch (e) {}
+        try { clientSock.destroy(); } catch (e) {}
+      });
       clientSock.on('data', function (chunk) {
         try { localSdb.write(chunk); } catch (e) {}
       });
